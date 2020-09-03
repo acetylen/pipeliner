@@ -6,7 +6,7 @@ Pipeliner is a simple-to-use asynchronous pipeline orchestrator for python funct
 
 **How to use:**
 
-1. register all steps using the @step decorator.
+1. register all steps using the `@step` decorator.
 2. call the step you want the result from, providing any missing prerequisites as arguments.
 
 **How it works:**
@@ -25,19 +25,19 @@ The return values of the executed step are returned.
 **Example:**
 
 ```python
-import pipeliner
+from pipeliner import step
 
-@pipeliner.step(provides="base")
+@step(provides="base")
 async def base_provider():
     print("base_provider called")
     return 23
 
-@pipeliner.step(provides=("result", "modulus"))
+@step(provides=("result", "modulus"))
 async def divide(base, divisor):
     print("divide called")
     return base // divisor, base % divisor
 
-@pipeliner.step()
+@step()
 async def get_division(base, result, modulus):
     print("get_division called")
     return base, result, modulus
