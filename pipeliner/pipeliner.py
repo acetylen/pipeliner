@@ -48,6 +48,7 @@ class Pipeline:
             provides = (provides,)
 
         def decorator(func):
+            log.debug("adding step %s", func.__name__)
             return wraps(func)(Step(pipe=self, func=func, provides=provides))
 
         return decorator
@@ -102,15 +103,20 @@ class Step:
             self.pipe._add_call_graph(self)
 
         # run prerequisites
+        log.debug("Running prerequisites for %s", self.fname)
         await asyncio.gather(*[f() for f in self.prerequisites])
 
         # check for pre-existing resources
         for resource in self.provides:
             if self.pipe.resource_ready(resource):
-                log.debug(f"{resource} is already cached, skipping call to {self.fname}")
-                return
+                log.debug(
+                    "Resource %s is already available, skipping call to %s",
+                    resource,
+                    self.fname,
+                )
+                return  # Resources are cached, skip call
 
-        # Pull arguments from store
+        # Pull arguments from store as they become available
         args, kwargs = [], {}
         for resource in self.wants:
             value = await self.pipe.resource(resource)
