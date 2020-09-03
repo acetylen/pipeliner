@@ -16,24 +16,6 @@ it is about to run, the function is not run and dependecy resolution continues
 as normal. This allows the user to skip parts of the tree by providing values.
 
 The return values of the executed step are returned.
-
-example:
-
-@step(provides="base")
-async def base_provider():
-    return 23
-
-@step(provides=("result", "modulus"))
-async def divide(base, divisor):
-    return base // divisor, base % divisor
-
-@step()
-async def get_division(base, result, modulus):
-    return base, result, modulus  # base exists in store so it is not run again
-
-async def main():
-    base, result, mod = await get_division.run(divisor=3)
-    print(base,"divided by 3 is", result, "with a remainder of", mod)
 """
 
 import asyncio
