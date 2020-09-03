@@ -41,6 +41,7 @@ class Pipeline:
             self.add_resources(**initial_resources)
 
     def step(self, provides: Sequence[str] = None):
+        """Decorator; designates a function as a step in a pipeline."""
         if not provides:
             provides = ()
         elif isinstance(provides, str):
@@ -52,17 +53,21 @@ class Pipeline:
         return decorator
 
     def add_resources(self, **kwargs):
+        """Add resources to store."""
         for k, v in kwargs.items():
             log.debug("adding resource %s", k)
             self._store[k].set_result(v)
 
     def resource_ready(self, name):
+        """Check if the named resource is available for use."""
         return self._store[name].done()
 
     async def resource(self, name):
+        """Block until named resource is available, then return it."""
         return await self._store[name]
 
     def _add_call_graph(self, func):
+        """Add a tree of prerequisites to the given step function."""
         log.debug("building call graph for %s", func.__name__)
         parents = set()
         for want in func.wants:
@@ -90,19 +95,24 @@ class Step:
                 pipe._provider[resource] = self.fname
 
     async def __call__(self, **resources):
+        self.pipe.add_resources(**resources)
+
+        # Build prerequisites tree
         if not self.prerequisites:
             self.pipe._add_call_graph(self)
-        self.pipe.add_resources(**resources)
-        log.debug("running prerequisites for %s", self.fname)
+
+        # run prerequisites
         await asyncio.gather(*[f() for f in self.prerequisites])
+
+        # check for pre-existing resources
         for resource in self.provides:
             if self.pipe.resource_ready(resource):
                 log.debug(f"{resource} is already cached, skipping call to {self.fname}")
                 return
 
+        # Pull arguments from store
         args, kwargs = [], {}
         for resource in self.wants:
-            log.debug("%s is waiting for resource %s", self.fname, resource)
             value = await self.pipe.resource(resource)
             param = self.sig.parameters[resource]
             if param.kind is param.VAR_POSITIONAL:
@@ -110,8 +120,9 @@ class Step:
             else:
                 kwargs[resource] = value
 
-        log.debug("calling %s", self.fname)
         results = await self.func(*args, **kwargs)
+
+        # put results into store
         if not self.provides:
             return results
 
