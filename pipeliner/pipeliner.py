@@ -84,29 +84,13 @@ class Pipeline:
 
     async def resource(self, name):
         """Get a resource from the store, blocking until it is ready to use."""
+        if not self._store[name].done() and self._provider[name] != _ENV:
+            await self._steps[self._provider[name]]()
         return await self._store[name]
 
     def clear(self):
         """Remove all resources from the store."""
         self._store.clear()
-
-    async def run_for_resources(self, *resources):
-        """Run every step in the pipeline that is required
-        for the named resources to become available."""
-        run = set()
-        for resource in resources:
-            if resource not in self._provider:
-                raise PipelineError(f"Nothing provides {resource}!")
-            provider = self._provider[resource]
-            if provider is not _ENV:
-                run.add(provider)
-
-        log.debug("running %s", ",".join(run))
-        runners = (self._steps[r]() for r in run)
-        await asyncio.gather(*runners)
-
-        return {r: await self._store[r] for r in resources}
-
 
 class Step:
     """A step is the smallest element of a pipeline.
@@ -121,16 +105,6 @@ class Step:
         self.sig = signature(func)
         self.provides = provides
         self.prerequisites: Sequence[Callable] = []
-
-    def _fmt_args(self, args):
-        a, k = [], {}
-        for name, value in args.items():
-            param = self.sig.parameters[name]
-            if param.kind is param.VAR_POSITIONAL:
-                a.append(value)
-            else:
-                k[name] = value
-        return a, k
 
     def _fmt_results(self, results):
         if not self.provides:
@@ -156,9 +130,13 @@ class Step:
             log.debug("skipping %s, resource already cached", self.fname)
             return
 
-        wants = await self.pipe.run_for_resources(*self.sig.parameters.keys())
-
-        args, kwargs = self._fmt_args(wants)
+        args, kwargs = [], {}
+        for name, param in self.sig.parameters.items():
+            value = await self.pipe.resource(name)
+            if param.kind is param.VAR_POSITIONAL:
+                args.append(value)
+            else:
+                kwargs[name] = value
 
         log.debug("calling %s", self.fname)
         results = await self.func(*args, **kwargs)
