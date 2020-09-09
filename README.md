@@ -44,8 +44,8 @@ async def get_division(base, result, modulus):
 
 async def main():
     base, result, mod = await get_division(divisor=3)
-    divisor = await(resource("divisor")
-    print(base, "divided by", divisor,  "is", result, "with", mod, "left")
+    divisor = await resource("divisor")
+    print(base, "divided by", divisor, "is", result, "with", mod, "left")
 
 if __name__ == "__main__":
     import asyncio
