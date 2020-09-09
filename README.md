@@ -43,9 +43,7 @@ async def get_division(base, result, modulus):
     return base, result, modulus
 
 async def main():
-    # base_provider will not be called because the "base" resource already exists.
-    result, mod = await get_division(base=83, divisor=3)
-    base = await resource("base")
+    base, result, mod = await get_division(divisor=3)
     divisor = await(resource("divisor")
     print(base, "divided by", divisor,  "is", result, "with", mod, "left")
 
