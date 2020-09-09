@@ -27,12 +27,20 @@ from typing import Any, Callable, Dict, Sequence
 
 log = logging.getLogger(__name__)
 
+_ENV = "!environment!"
+
 
 class PipelineError(Exception):
     pass
 
 
 class Pipeline:
+    """A pipeline is a series of steps that provide resources to one another.
+
+    Steps are defined using the step decorator. The provides argument to the decorator
+    define the resource(s) that the step creates, and the function parameters define
+    what resources need to be available for the step to be able to run."""
+
     def __init__(self, initial_resources: Dict[str, Any] = None):
         self._store: Dict[str, asyncio.Future] = defaultdict(asyncio.Future)
         self._steps: Dict[str, Callable] = {}
@@ -41,94 +49,90 @@ class Pipeline:
             self.add_resources(**initial_resources)
 
     def step(self, provides: Sequence[str] = None):
-        """Decorator; designates a function as a step in a pipeline."""
-        if not provides:
+        """Designate a function as a pipeline step.
+
+        {provides} is a list of resource names which will be available when this
+        step finishes."""
+
+        if provides is None:
             provides = ()
         elif isinstance(provides, str):
             provides = (provides,)
 
         def decorator(func):
-            log.debug("adding step %s", func.__name__)
-            return wraps(func)(Step(pipe=self, func=func, provides=provides))
+            out = Step(pipe=self, func=func, provides=provides)
+            self._steps[func.__name__] = out
+            for resource in provides:
+                # TODO: if multiple steps provide a resource, what's the resolution order?
+                # For now, we go in registration order.
+                if resource not in self._provider:
+                    self._provider[resource] = func.__name__
+            return wraps(func)(out)
 
         return decorator
 
-    def add_resources(self, **kwargs):
-        """Add resources to store."""
+    def add_resources(self, __provider=_ENV, **kwargs):
+        """Add one or more named resources to the pipeline datastore."""
         for k, v in kwargs.items():
             log.debug("adding resource %s", k)
             self._store[k].set_result(v)
+            self._provider[k] = __provider
 
     def resource_ready(self, name):
-        """Check if the named resource is available for use."""
+        """Check if the named resource is ready for use."""
         return self._store[name].done()
 
     async def resource(self, name):
-        """Block until named resource is available, then return it."""
+        """Get a resource from the store, blocking until it is ready to use."""
         return await self._store[name]
 
-    def _add_call_graph(self, func):
-        """Add a tree of prerequisites to the given step function."""
-        log.debug("building call graph for %s", func.__name__)
-        parents = set()
-        for want in func.wants:
-            if self._store[want].done():  # already provided
-                continue
-            parents.add(self._provider[want])
-        func.prerequisites = (self._add_call_graph(self._steps[p]) for p in parents)
-        return func
+    def clear(self):
+        """Remove all resources from the store."""
+        self._store.clear()
+
+    async def run_for_resources(self, *resources):
+        """Run every step in the pipeline that is required
+        for the named resources to become available."""
+        run = set()
+        for resource in resources:
+            if resource not in self._provider:
+                raise PipelineError(f"Nothing provides {resource}!")
+            provider = self._provider[resource]
+            if provider is not _ENV:
+                run.add(provider)
+
+        log.debug("running %s", ",".join(run))
+        runners = (self._steps[r]() for r in run)
+        await asyncio.gather(*runners)
+
+        return {r: await self._store[r] for r in resources}
 
 
 class Step:
+    """A step is the smallest element of a pipeline.
+
+    Running a step will cause every unfulfilled dependency of that step to be
+    filled by making the pipeline run every preceding step."""
+
     def __init__(self, pipe, func, provides):
         self.pipe = pipe
         self.func = func
         self.fname = func.__name__
         self.sig = signature(func)
-        self.wants = tuple(self.sig.parameters.keys())
         self.provides = provides
         self.prerequisites: Sequence[Callable] = []
 
-        pipe._steps[self.fname] = self
-        for resource in provides:
-            # TODO: if multiple steps provide a resource, what's the resolution order?
-            if resource not in pipe._provider:
-                pipe._provider[resource] = self.fname
-
-    async def __call__(self, **resources):
-        self.pipe.add_resources(**resources)
-
-        # Build prerequisites tree
-        if not self.prerequisites:
-            self.pipe._add_call_graph(self)
-
-        # run prerequisites
-        log.debug("Running prerequisites for %s", self.fname)
-        await asyncio.gather(*[f() for f in self.prerequisites])
-
-        # check for pre-existing resources
-        for resource in self.provides:
-            if self.pipe.resource_ready(resource):
-                log.debug(
-                    "Resource %s is already available, skipping call to %s",
-                    resource,
-                    self.fname,
-                )
-                return  # Resources are cached, skip call
-
-        # Pull arguments from store as they become available
-        args, kwargs = [], {}
-        for resource in self.wants:
-            value = await self.pipe.resource(resource)
-            param = self.sig.parameters[resource]
+    def _fmt_args(self, args):
+        a, k = [], {}
+        for name, value in args.items():
+            param = self.sig.parameters[name]
             if param.kind is param.VAR_POSITIONAL:
-                args.append(value)
+                a.append(value)
             else:
-                kwargs[resource] = value
+                k[name] = value
+        return a, k
 
-        results = await self.func(*args, **kwargs)
-
-        # put results into store
+    def _fmt_results(self, results):
         if not self.provides:
             return results
 
@@ -136,6 +140,7 @@ class Step:
             results = (results,)
 
         if len(results) != len(self.provides):
+            # TODO: support functions that want to add_resources during runtime
             raise PipelineError(
                 f"Output mismatched in step {self.fname}:"
                 f" expected {len(self.provides)}"
@@ -144,3 +149,18 @@ class Step:
         self.pipe.add_resources(**dict(zip(self.provides, results)))
 
         return results
+
+    async def __call__(self, **resources):
+        self.pipe.add_resources(**resources)
+        if any(self.pipe.resource_ready(res) for res in self.provides):
+            log.debug("skipping %s, resource already cached", self.fname)
+            return
+
+        wants = await self.pipe.run_for_resources(*self.sig.parameters.keys())
+
+        args, kwargs = self._fmt_args(wants)
+
+        log.debug("calling %s", self.fname)
+        results = await self.func(*args, **kwargs)
+
+        return self._fmt_results(results)
