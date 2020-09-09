@@ -25,30 +25,51 @@ The return values of the executed step are returned.
 **Example:**
 
 ```python
-from pipeliner import step, resource, add_resources
+from pipeliner import add_resources, resource, step
+
 
 @step(provides="base")
 async def base_provider():
     print("base_provider called")
     return 23
 
-@step(provides=("result", "modulus"))
+
+@step(provides="result")
 async def divide(base, divisor):
     print("divide called")
-    return base // divisor, base % divisor
+    return base // divisor
+
+
+@step(provides="modulus")
+async def mod(base, divisor):
+    print("mod called")
+    return base % divisor
+
+
+@step(provides=("res_times_mod", "res_minus_mod"))
+async def get_resmod(result, modulus):
+    print("something_else called")
+    return result * modulus, result - modulus
+
 
 @step()
 async def get_division(base, result, modulus):
     print("get_division called")
     return base, result, modulus
 
+
 async def main():
-    add_resources(base=38) # since base is provided, base_provider will not run
+    add_resources(base=38)  # since base is provided, base_provider will not run
     base, result, mod = await get_division(divisor=3)
     divisor = await resource("divisor")
     print(base, "divided by", divisor, "is", result, "with", mod, "left")
 
+    times, minus = await get_resmod()  # All prerequisites already exist
+    print("result * modulus is", times, "and result - modulus is", minus)
+
+
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())
 ```
