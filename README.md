@@ -48,7 +48,7 @@ async def mod(base, divisor):
 
 @step(provides=("res_times_mod", "res_minus_mod"))
 async def get_resmod(result, modulus):
-    print("something_else called")
+    print("get_resmod called")
     return result * modulus, result - modulus
 
 
