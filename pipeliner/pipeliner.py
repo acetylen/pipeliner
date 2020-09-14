@@ -25,8 +25,6 @@ from functools import wraps
 from inspect import signature
 from typing import Any, Callable, Dict, Sequence
 
-log = logging.getLogger(__name__)
-
 _ENV = "!environment!"
 
 
@@ -42,6 +40,7 @@ class Pipeline:
     what resources need to be available for the step to be able to run."""
 
     def __init__(self, initial_resources: Dict[str, Any] = None):
+        self.log = logging.getLogger(__name__)
         self._store: Dict[str, asyncio.Future] = defaultdict(asyncio.Future)
         self._steps: Dict[str, Callable] = {}
         self._provider: Dict[str, str] = {}
@@ -111,7 +110,7 @@ class Pipeline:
     def add_resources(self, __provider=_ENV, **kwargs):
         """Add one or more named resources to the pipeline datastore."""
         for k, v in kwargs.items():
-            log.debug("adding resource %s", k)
+            self.log.debug("adding resource %s", k)
             self._store[k].set_result(v)
             self._provider[k] = __provider
 
@@ -122,7 +121,13 @@ class Pipeline:
     async def resource(self, name):
         """Get a resource from the store, blocking until it is ready to use."""
         if not self._store[name].done() and self._provider[name] != _ENV:
+            self.log.debug("waiting for %s to become available", name)
             await self._steps[self._provider[name]]()
         return await self._store[name]
 
     def clear(self):
+        """Remove all runtime-provided resources from the store."""
+        for resource, provider in self._provider.items():
+            if provider == _ENV:
+                continue
+            del self._store[resource]
