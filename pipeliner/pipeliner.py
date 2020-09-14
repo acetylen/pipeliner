@@ -25,8 +25,6 @@ from functools import wraps
 from inspect import signature
 from typing import Any, Callable, Dict, Sequence
 
-log = logging.getLogger(__name__)
-
 _ENV = "!environment!"
 
 
@@ -42,6 +40,7 @@ class Pipeline:
     what resources need to be available for the step to be able to run."""
 
     def __init__(self, initial_resources: Dict[str, Any] = None):
+        self.log = logging.getLogger(__name__)
         self._store: Dict[str, asyncio.Future] = defaultdict(asyncio.Future)
         self._steps: Dict[str, Callable] = {}
         self._provider: Dict[str, str] = {}
@@ -74,7 +73,7 @@ class Pipeline:
     def add_resources(self, __provider=_ENV, **kwargs):
         """Add one or more named resources to the pipeline datastore."""
         for k, v in kwargs.items():
-            log.debug("adding resource %s", k)
+            self.log.debug("adding resource %s", k)
             self._store[k].set_result(v)
             self._provider[k] = __provider
 
@@ -85,6 +84,7 @@ class Pipeline:
     async def resource(self, name):
         """Get a resource from the store, blocking until it is ready to use."""
         if not self._store[name].done() and self._provider[name] != _ENV:
+            self.log.debug("waiting for %s to become available", name)
             await self._steps[self._provider[name]]()
         return await self._store[name]
 
@@ -99,6 +99,7 @@ class Step:
     filled by making the pipeline run every preceding step."""
 
     def __init__(self, pipe, func, provides):
+        self.log = logging.getLogger(self.__name__)
         self.pipe = pipe
         self.func = func
         self.fname = func.__name__
@@ -127,7 +128,7 @@ class Step:
     async def __call__(self, **resources):
         self.pipe.add_resources(**resources)
         if any(self.pipe.resource_ready(res) for res in self.provides):
-            log.debug("skipping %s, resource already cached", self.fname)
+            self.log.debug("skipping %s, resource already cached", self.fname)
             return
 
         args, kwargs = [], {}
@@ -138,7 +139,7 @@ class Step:
             else:
                 kwargs[name] = value
 
-        log.debug("calling %s", self.fname)
+        self.log.debug("calling %s", self.fname)
         results = await self.func(*args, **kwargs)
 
         return self._fmt_results(results)
