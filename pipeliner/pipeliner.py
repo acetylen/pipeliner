@@ -89,8 +89,12 @@ class Pipeline:
         return await self._store[name]
 
     def clear(self):
-        """Remove all resources from the store."""
-        self._store.clear()
+        """Remove all runtime-provided resources from the store."""
+        for resource, provider in self._provider.items():
+            if provider == _ENV:
+                continue
+            del self._store[resource]
+
 
 class Step:
     """A step is the smallest element of a pipeline.
