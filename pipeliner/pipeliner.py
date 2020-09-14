@@ -59,14 +59,51 @@ class Pipeline:
             provides = (provides,)
 
         def decorator(func):
-            out = Step(pipe=self, func=func, provides=provides)
-            self._steps[func.__name__] = out
+            func._provides = provides
+            func._wants = signature(func).parameters
+
             for resource in provides:
                 # TODO: if multiple steps provide a resource, what's the resolution order?
-                # For now, we go in registration order.
+                # For now, the first one to register gets dibs.
                 if resource not in self._provider:
                     self._provider[resource] = func.__name__
-            return wraps(func)(out)
+
+            @wraps(func)
+            async def step_wrapper(**resources):
+                self.add_resources(**resources)
+                if any(self.resource_ready(r) for r in func._provides):
+                    log.debug("Resource cached, skipping %s", func.__name__)
+                    return
+
+                args, kwargs = [], {}
+                for name, param in func._wants.items():
+                    value = await self.resource(name)
+                    if param.kind is param.VAR_POSITIONAL:
+                        args.append(value)
+                    else:
+                        kwargs[name] = value
+
+                log.debug("calling %s", func.__name__)
+                results = await func(*args, **kwargs)
+                if not func._provides:
+                    return results
+
+                if len(func._provides) == 1:
+                    results = (results,)
+
+                if len(results) != len(func._provides):
+                    # TODO: support functions that want to add_resources during runtime
+                    raise PipelineError(
+                        f"Expected {func.__name__} to return "
+                        f"{len(func._provides)} value(s), but got {len(results)}"
+                    )
+                resources = dict(zip(func._provides, results))
+                self.add_resources(__provider=func.__name__, **resources)
+
+                return results
+
+            self._steps[func.__name__] = step_wrapper
+            return step_wrapper
 
         return decorator
 
@@ -94,56 +131,3 @@ class Pipeline:
             if provider == _ENV:
                 continue
             del self._store[resource]
-
-
-class Step:
-    """A step is the smallest element of a pipeline.
-
-    Running a step will cause every unfulfilled dependency of that step to be
-    filled by making the pipeline run every preceding step."""
-
-    def __init__(self, pipe, func, provides):
-        self.log = logging.getLogger(self.__name__)
-        self.pipe = pipe
-        self.func = func
-        self.fname = func.__name__
-        self.sig = signature(func)
-        self.provides = provides
-        self.prerequisites: Sequence[Callable] = []
-
-    def _fmt_results(self, results):
-        if not self.provides:
-            return results
-
-        if len(self.provides) == 1:
-            results = (results,)
-
-        if len(results) != len(self.provides):
-            # TODO: support functions that want to add_resources during runtime
-            raise PipelineError(
-                f"Output mismatched in step {self.fname}:"
-                f" expected {len(self.provides)}"
-                f" return value(s), got {len(results)}"
-            )
-        self.pipe.add_resources(**dict(zip(self.provides, results)))
-
-        return results
-
-    async def __call__(self, **resources):
-        self.pipe.add_resources(**resources)
-        if any(self.pipe.resource_ready(res) for res in self.provides):
-            self.log.debug("skipping %s, resource already cached", self.fname)
-            return
-
-        args, kwargs = [], {}
-        for name, param in self.sig.parameters.items():
-            value = await self.pipe.resource(name)
-            if param.kind is param.VAR_POSITIONAL:
-                args.append(value)
-            else:
-                kwargs[name] = value
-
-        self.log.debug("calling %s", self.fname)
-        results = await self.func(*args, **kwargs)
-
-        return self._fmt_results(results)
