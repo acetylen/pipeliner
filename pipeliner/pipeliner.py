@@ -45,7 +45,7 @@ class Pipeline:
         self._steps: Dict[str, Callable] = {}
         self._provider: Dict[str, str] = {}
         if initial_resources:
-            self.add_resources(**initial_resources)
+            self.add_environment_resources(**initial_resources)
 
     def step(self, provides: Sequence[str] = None):
         """Designate a function as a pipeline step.
@@ -70,9 +70,9 @@ class Pipeline:
 
             @wraps(func)
             async def step_wrapper(**resources):
-                self.add_resources(**resources)
+                self.add_environment_resources(**resources)
                 if any(self.resource_ready(r) for r in func._provides):
-                    log.debug("Resource cached, skipping %s", func.__name__)
+                    self.log.debug("Resource cached, skipping %s", func.__name__)
                     return
 
                 args, kwargs = [], {}
@@ -83,7 +83,7 @@ class Pipeline:
                     else:
                         kwargs[name] = value
 
-                log.debug("calling %s", func.__name__)
+                self.log.debug("calling %s", func.__name__)
                 results = await func(*args, **kwargs)
                 if not func._provides:
                     return results
@@ -98,7 +98,7 @@ class Pipeline:
                         f"{len(func._provides)} value(s), but got {len(results)}"
                     )
                 resources = dict(zip(func._provides, results))
-                self.add_resources(__provider=func.__name__, **resources)
+                self._add_returned_resources(_provider=func.__name__, **resources)
 
                 return results
 
@@ -107,12 +107,15 @@ class Pipeline:
 
         return decorator
 
-    def add_resources(self, __provider=_ENV, **kwargs):
+    def _add_returned_resources(self, _provider, **kwargs):
         """Add one or more named resources to the pipeline datastore."""
         for k, v in kwargs.items():
             self.log.debug("adding resource %s", k)
             self._store[k].set_result(v)
-            self._provider[k] = __provider
+            self._provider[k] = _provider
+
+    def add_environment_resources(self, **kwargs):
+        self._add_returned_resources(_provider=_ENV, **kwargs)
 
     def resource_ready(self, name):
         """Check if the named resource is ready for use."""
