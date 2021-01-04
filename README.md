@@ -25,7 +25,7 @@ The return values of the executed step are returned.
 **Example:**
 
 ```python
-from pipeliner import add_resources, resource, step
+from pipeliner import add_environment_resources, resource, step
 
 
 @step(provides="base")
@@ -59,7 +59,9 @@ async def get_division(base, result, modulus):
 
 
 async def main():
-    add_resources(base=38)  # since base is provided, base_provider will not run
+    add_environment_resources(base=38)
+    # since base is provided, base_provider will not run
+
     base, result, mod = await get_division(divisor=3)
     divisor = await resource("divisor")
     print(base, "divided by", divisor, "is", result, "with", mod, "left")
