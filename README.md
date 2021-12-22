@@ -68,23 +68,22 @@ async def main():
     print(base, "divided by", divisor, "is", result, "with", mod, "left")
 
     times, minus = await get_resmod()  # All prerequisites already exist
-    print("result * modulus is", times, "and result - modulus is", minus)
+    print("result x modulus is", times, "and result - modulus is", minus)
 
 
 if __name__ == "__main__":
     import asyncio
 
     asyncio.run(main())
+```
 
-------
-
+```shell
 $ python example.py
 divide called
 mod called
-# since base is provided, base_provider will not run
-get_division called
+get_division called  # since base is provided, base_provider will not run
 38 divided by 3 is 12 with 2 left
 get_resmod called
-result * modulus is 24 and result - modulus is 10
+result x modulus is 24 and result - modulus is 10
 $
 ```
